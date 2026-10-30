@@ -1,3 +1,5 @@
+![Banner](banner.png)
+
 # monitor-networkconnections
 Monitors established network connections, including process ID, local and remote addresses/ports, and connection state, alerting on new or unexpected connections. - Focused on System monitoring and alerts
 
