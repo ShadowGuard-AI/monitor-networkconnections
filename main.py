@@ -26,6 +26,12 @@ def setup_argparse():
     return parser.parse_args()
 
 def connection_key(pid, local_address, remote_address, status, process_name):
+    # Identity here includes the process id, both ports, and the
+    # status, so an ordinary connection aging from ESTABLISHED
+    # to TIME_WAIT is a new connection to me, and a fresh
+    # ephemeral port makes every short lived connection new by
+    # construction. New is a statement about my key, not about
+    # whether anything unusual happened.
     plain = f"{pid}|{local_address}|{remote_address}|{status}|{process_name}"
     return hashlib.sha256(plain.encode('utf-8')).hexdigest()
 
@@ -98,6 +104,12 @@ def load_known_connections(file_path):
         return {}
     except json.JSONDecodeError:
         logging.error(f"Error decoding JSON from {file_path}. Starting with an empty known connections list.")
+        # A corrupt known connections file starts the run from an
+        # empty map, and the first cycle then reports every current
+        # connection as new and overwrites the file with them. That
+        # is also the first run behaviour: I have no silent baseline
+        # capture, so a first run on a busy machine is a wall of new
+        # connection warnings for connections that were always there.
         return {}
     except Exception as e:
         logging.error(f"Error loading known connections: {e}. Starting with an empty known connections list.")
@@ -159,6 +171,10 @@ def main():
         while True:
             try:
                 current_connections = get_current_connections()
+            # On a multi user machine this enumeration can be denied
+            # outright without the rights it needs, and my answer is to end
+            # the run. There is no degraded mode where I watch only the
+            # connections I am allowed to see.
             except psutil.AccessDenied as e:
                 logging.error(f"Access denied while enumerating network connections: {e}")
                 sys.exit(1)
@@ -171,6 +187,11 @@ def main():
             known_connections.update(current_connections)
             for key in list(known_connections.keys()):
                 if key not in current_connections:
+                    # Three missing cycles at the default five second interval
+                    # is about fifteen seconds. A connection quiet for that long
+                    # is forgotten, and if it reappears it is announced as new a
+                    # second time. The pruning keeps the file small at the price
+                    # of re-alerting on anything intermittent.
                     missing_cycles[key] = missing_cycles.get(key, 0) + 1
                     if missing_cycles[key] >= PRUNE_AFTER_MISSING_CYCLES:
                         logging.info(f"Pruning known connection absent for {PRUNE_AFTER_MISSING_CYCLES} cycles: {key}")
